@@ -2,6 +2,8 @@
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <math.h>
 
 #define TRACKER_RANK 0
 #define MAX_FILES 10
@@ -28,6 +30,25 @@ void tracker(int numtasks, int rank) {
 }
 
 void peer(int numtasks, int rank) {
+    //  Data init
+    int rank_length = (int)log10(rank) + 1;
+
+    char filename[MAX_FILENAME] = "in";
+    char number[rank_length + 1];
+
+    sprintf(number, "%d", rank);
+    strcat(filename, number);
+    strcat(filename, ".txt");
+
+    //  Open read file
+    FILE *fptr;
+    fptr = fopen(filename, "r");
+
+    //  Read owned files
+
+    //  Read wanted files
+    
+    //  Thread init
     pthread_t download_thread;
     pthread_t upload_thread;
     void *status;
