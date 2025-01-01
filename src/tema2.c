@@ -99,8 +99,7 @@ struct Swarm *update_swarm(struct ThreadData *thread_data, int index) {
 
     //  Chunks
     for (int i = 0; i < swarm->file.chunk_nr; i++) {
-        MPI_Recv((void *) message, HASH_SIZE + 1, MPI_CHAR, TRACKER_RANK, DOWNLOAD_TAG, MPI_COMM_WORLD, &status);
-        strcpy(swarm->file.chunks[i], message);
+        MPI_Recv((void *) swarm->file.chunks[i], HASH_SIZE + 1, MPI_CHAR, TRACKER_RANK, DOWNLOAD_TAG, MPI_COMM_WORLD, &status);
     }
 
     //  Seed nr
@@ -138,10 +137,9 @@ void *download_thread_func(void *arg)
 
     //  Start downloading wanted files
     for (int filei = 0; filei < thread_data->file_nr_w; filei++) {
-        printf("here1 %d\n", thread_data->rank);
         //  Acquire swarm for crt file
         struct Swarm *swarm = update_swarm(thread_data, filei);
-        printf("here2 %d\n", thread_data->rank);
+
         if (swarm == NULL) {
             printf("File doesn't exist.\n");
             continue;
@@ -191,6 +189,11 @@ void *download_thread_func(void *arg)
                 }
             }
 
+            //  Exit loop if it's the last step
+            if (chunki >= swarm->file.chunk_nr) {
+                break;
+            }
+
             for (int peer = 0; peer < swarm->numpeers; peer++) {
                 //  Currrent process can find himself as peer; requires skip
                 if (swarm->peers[peer] == thread_data->rank) {
@@ -221,6 +224,7 @@ void *download_thread_func(void *arg)
                 if (chunki % 10 == 0) {
                     free(swarm->seeds);
                     free(swarm->peers);
+                    free(swarm);
 
                     swarm = update_swarm(thread_data, filei);
                 }
@@ -233,8 +237,8 @@ void *download_thread_func(void *arg)
         MPI_Send((void *) message, strlen(message) + 1, MPI_CHAR, TRACKER_RANK, 0, MPI_COMM_WORLD);
 
         //  Add file to owned files
-        memcpy((void*) &thread_data->owned_files[thread_data->file_nr_o], (void *) &swarm->file,
-        sizeof(struct TorrentFile));
+        memcpy((void *) &thread_data->owned_files[thread_data->file_nr_o], (void *) &swarm->file, sizeof(struct TorrentFile));
+
         thread_data->file_nr_o++;
 
         //  Create file
@@ -262,6 +266,13 @@ void *download_thread_func(void *arg)
         for (int i = 0; i < swarm->file.chunk_nr; i++) {
             fprintf(fptr, "%s\n", swarm->file.chunks[i]);
         }
+
+        fclose(fptr);
+
+        //  Free current swarm
+        free(swarm->seeds);
+        free(swarm->peers);
+        free(swarm);
     }
 
     //  Notify the tracker that download is entirely finished
@@ -287,6 +298,7 @@ void *upload_thread_func(void *arg)
 
         //  Tracker release message
         if (status.MPI_SOURCE == TRACKER_RANK) {
+            printf("%d\n", thread_data->rank);
             break;
         
         //  Chunk request
@@ -364,7 +376,6 @@ void tracker(int numtasks, int rank) {
             char chunks[MAX_CHUNKS][HASH_SIZE + 1];
             for (int j = 0; j < chunk_nr; j++) {
                 MPI_Recv((void *) chunks[j], HASH_SIZE + 1, MPI_CHAR, status.MPI_SOURCE, 0, MPI_COMM_WORLD, &status);
-
             }
 
             //  Tracker checks if it has this file
@@ -376,7 +387,7 @@ void tracker(int numtasks, int rank) {
                 strcpy(swarms[swarms_size].file.filename, filename);
                 swarms[swarms_size].file.chunk_nr = chunk_nr;
                 for (int j = 0; j < chunk_nr; j++) {
-                    strcpy(swarms[swarms_size].file.chunks[i], chunks[j]);
+                    strcpy(swarms[swarms_size].file.chunks[j], chunks[j]);
                 }
 
                 //  Add its first owner
@@ -410,6 +421,7 @@ void tracker(int numtasks, int rank) {
     char message[MAX_MSG_LEN] = "";
     int len = 0;
 
+    //  DOWNLOAD STARTS HERE
     while (active_tasks > 0) {
         //  Wait for message
         MPI_Probe(MPI_ANY_SOURCE, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
@@ -486,7 +498,7 @@ void tracker(int numtasks, int rank) {
             }
 
         //  Process has finished all downloads
-        } else if (strcmp(message, "done")) {
+        } else if (strcmp(message, "done") == 0) {
             active_tasks--;
         }
     }
@@ -494,16 +506,8 @@ void tracker(int numtasks, int rank) {
     //  Signal all processes to stop
     strcpy(message, "stop");
     for (int i = 1; i < numtasks; i++) {
-        MPI_Send((void *) message, strlen(message) + 1, MPI_CHAR, status.MPI_SOURCE, UPLOAD_TAG, MPI_COMM_WORLD);
+        MPI_Send((void *) message, strlen(message) + 1, MPI_CHAR, i, UPLOAD_TAG, MPI_COMM_WORLD);
     }
-
-    // for (int i = 0; i < swarms_size; i++) {
-    //     printf("%s: ", swarms[i].file.filename);
-    //     for (int j = 0; j < swarms[i].numseeds; j++) {
-    //         printf("%d, ", swarms[i].seeds[j]);
-    //     }
-    //     printf("\n");
-    // }
 }
 
 void peer(int numtasks, int rank) {
@@ -531,7 +535,7 @@ void peer(int numtasks, int rank) {
     int file_nr_o = 0;
     fscanf(fptr, "%d\n", &file_nr_o);
 
-    struct TorrentFile owned_files[file_nr_o];
+    struct TorrentFile owned_files[MAX_FILES];
     for (int i = 0; i < file_nr_o; i++) {
         //  Store name
         fscanf(fptr, "%s ", owned_files[i].filename);
@@ -547,7 +551,7 @@ void peer(int numtasks, int rank) {
     int file_nr_w = 0;
     fscanf(fptr, "%d\n", &file_nr_w);
 
-    struct TorrentFile wanted_files[file_nr_w];
+    struct TorrentFile wanted_files[MAX_FILES];
     for (int i = 0; i < file_nr_w; i++) {
         //  Store name
         fscanf(fptr, "%s\n", wanted_files[i].filename);
