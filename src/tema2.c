@@ -158,7 +158,7 @@ void *download_thread_func(void *arg)
         while (chunki < swarm->file.chunk_nr) {
             //  Rotate between seed and peers, collecting segments
 
-            for (int seed = 0; seed < swarm->numseeds; seed++) {
+            for (int seed = 0; seed < swarm->numseeds && chunki < swarm->file.chunk_nr; seed++) {
                 //  Message: 'chunk' 'filename'
                 sprintf(message, "%d", chunki);
                 strcat(message,  " ");
@@ -194,7 +194,7 @@ void *download_thread_func(void *arg)
                 break;
             }
 
-            for (int peer = 0; peer < swarm->numpeers; peer++) {
+            for (int peer = 0; peer < swarm->numpeers && chunki < swarm->file.chunk_nr; peer++) {
                 //  Currrent process can find himself as peer; requires skip
                 if (swarm->peers[peer] == thread_data->rank) {
                     continue;
@@ -298,7 +298,6 @@ void *upload_thread_func(void *arg)
 
         //  Tracker release message
         if (status.MPI_SOURCE == TRACKER_RANK) {
-            printf("%d\n", thread_data->rank);
             break;
         
         //  Chunk request
@@ -341,6 +340,7 @@ void *upload_thread_func(void *arg)
             MPI_Send((void *) message, strlen(message) + 1, MPI_CHAR, status.MPI_SOURCE, DOWNLOAD_TAG, MPI_COMM_WORLD);
         }
     }
+
     return NULL;
 }
 
